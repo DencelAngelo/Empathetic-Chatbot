@@ -1,16 +1,70 @@
+import requests
+import csv
+import io
 import re
 import random
+from collections import defaultdict
 
-class EmpatheticChatbot:
+class EmpatheticChatbotNRC:
     def __init__(self):
-        # Define keywords for each emotion scenario
-        self.emotion_keywords = {
-            'sad': ['sad', 'depressed', 'unhappy', 'down', 'miserable', 'heartbroken', 'lonely', 'crying', 'tears', 'grief', 'sorrow'],
-            'happy': ['happy', 'joy', 'excited', 'great', 'wonderful', 'amazing', 'fantastic', 'awesome', 'delighted', 'pleased', 'ecstatic'],
-            'stressed': ['stressed', 'anxious', 'overwhelmed', 'pressure', 'tense', 'worried', 'nervous', 'panic', 'burnout', 'exhausted']
-        }
+        self.load_nrc_lexicon()
+        self.setup_emotion_mapping()
+        self.setup_responses()
+
+    def load_nrc_lexicon(self):
+        """Download and parse the NRC Emotion Lexicon"""
+        print("Loading NRC Emotion Lexicon...")
+        url = "https://raw.githubusercontent.com/ashwini2108/NRC-Emotion-Lexicon/master/NRC-Emotion-Lexicon-Wordlevel-v0.92.txt"
         
-        # Empathetic responses for each emotion
+        try:
+            response = requests.get(url)
+            response.raise_for_status()
+            lines = response.text.strip().split('\n')
+            
+            self.word_emotions = defaultdict(set)
+            for line in lines:
+                if line.strip() and not line.startswith('#'):
+                    parts = line.split('\t')
+                    if len(parts) == 3:
+                        word, emotion, flag = parts
+                        if flag == '1':
+                            self.word_emotions[word].add(emotion)
+            print(f"Loaded NRC lexicon with {len(self.word_emotions)} words.")
+        except Exception as e:
+            print(f"Warning: Could not load NRC lexicon ({e}). Falling back to basic keywords.")
+            self.use_fallback = True
+            self.setup_fallback_lexicon()
+        else:
+            self.use_fallback = False
+
+    def setup_fallback_lexicon(self):
+        """Basic fallback if NRC fails to load"""
+        self.word_emotions = defaultdict(set)
+        fallback = {
+            'sad': ['sad', 'depressed', 'unhappy', 'down', 'miserable', 'heartbroken', 'lonely', 'crying', 'tears', 'grief'],
+            'joy': ['happy', 'joy', 'excited', 'great', 'wonderful', 'amazing', 'fantastic', 'awesome', 'delighted'],
+            'fear': ['stressed', 'anxious', 'overwhelmed', 'pressure', 'tense', 'worried', 'nervous', 'panic', 'scared'],
+            'anger': ['angry', 'mad', 'furious', 'irritated', 'annoyed']
+        }
+        for emotion, words in fallback.items():
+            for word in words:
+                self.word_emotions[word].add(emotion)
+
+    def setup_emotion_mapping(self):
+        """
+        Map NRC emotions to our 3 scenarios:
+        - sad → sadness
+        - happy → joy
+        - stressed → fear + anger (stress often involves both)
+        """
+        self.emotion_to_scenario = {
+            'sadness': 'sad',
+            'joy': 'happy',
+            'fear': 'stressed',
+            'anger': 'stressed'
+        }
+
+    def setup_responses(self):
         self.responses = {
             'sad': [
                 "I'm really sorry you're feeling this way. That sounds really tough.",
@@ -32,7 +86,6 @@ class EmpatheticChatbot:
             ]
         }
         
-        # Supportive suggestions for each emotion
         self.suggestions = {
             'sad': [
                 "Would you like to try a short mindfulness exercise? It might help you feel a bit better.",
@@ -54,63 +107,61 @@ class EmpatheticChatbot:
             ]
         }
         
-        # Default responses when no emotion is detected
         self.default_responses = [
             "I'm here to listen. How are you feeling today?",
             "I care about how you're doing. Would you like to share what's on your mind?",
             "Your feelings matter to me. Is there something specific you'd like to talk about?",
             "I'm all ears. What's going on in your world right now?"
         ]
-    
-    def detect_emotion(self, user_input):
-        """Detect the primary emotion in the user's message"""
-        user_input = user_input.lower()
+
+    def detect_emotion_scenario(self, user_input):
+        """Use NRC lexicon to detect dominant emotion scenario"""
+        words = re.findall(r'\b\w+\b', user_input.lower())
+        emotion_scores = defaultdict(int)
         
-        # Count matches for each emotion
-        emotion_scores = {'sad': 0, 'happy': 0, 'stressed': 0}
+        for word in words:
+            if word in self.word_emotions:
+                for emotion in self.word_emotions[word]:
+                    if emotion in self.emotion_to_scenario:
+                        scenario = self.emotion_to_scenario[emotion]
+                        emotion_scores[scenario] += 1
         
-        for emotion, keywords in self.emotion_keywords.items():
-            for keyword in keywords:
-                if re.search(r'\b' + keyword + r'\b', user_input):
-                    emotion_scores[emotion] += 1
+        if not emotion_scores:
+            return None
         
-        # Return the emotion with the highest score, or None if no emotion detected
-        max_emotion = max(emotion_scores, key=emotion_scores.get)
-        return max_emotion if emotion_scores[max_emotion] > 0 else None
-    
+        #return scenario with highest score
+        return max(emotion_scores, key=emotion_scores.get)
+
     def generate_response(self, user_input):
-        """Generate an empathetic response based on detected emotion"""
-        emotion = self.detect_emotion(user_input)
-        
-        if emotion:
-            # Select a random response and suggestion for the detected emotion
-            response = random.choice(self.responses[emotion])
-            suggestion = random.choice(self.suggestions[emotion])
-            return f"{response}\n{suggestion}"
+        scenario = self.detect_emotion_scenario(user_input)
+        if scenario:
+            resp = random.choice(self.responses[scenario])
+            sugg = random.choice(self.suggestions[scenario])
+            return f"{resp}\n{sugg}"
         else:
-            # Use a default response if no emotion is detected
             return random.choice(self.default_responses)
-    
+
     def start_chat(self):
-        """Start the chatbot conversation"""
-        print("Hello! I'm your empathetic chatbot. I'm here to listen and support you.")
-        print("You can talk to me about how you're feeling. Type 'quit' to end our conversation.\n")
+        print("Hello! I'm your empathetic chatbot (powered by NRC Emotion Lexicon).")
+        print("I'm here to listen and support you. Type 'quit' to exit.\n")
         
         while True:
             user_input = input("You: ").strip()
-            
             if user_input.lower() in ['quit', 'exit', 'bye']:
                 print("Chatbot: Thank you for talking with me. Take care of yourself!")
                 break
-            
             if not user_input:
-                print("Chatbot: I'm here whenever you're ready to talk.")
+                print("Chatbot: I'm here whenever you're ready to talk.\n")
                 continue
             
             response = self.generate_response(user_input)
             print(f"Chatbot: {response}\n")
 
-# Run the chatbot
+
 if __name__ == "__main__":
-    bot = EmpatheticChatbot()
-    bot.start_chat()
+   #incase pip3 install request hast been installed yet
+    try:
+        bot = EmpatheticChatbotNRC()
+        bot.start_chat()
+    except KeyboardInterrupt:
+        print("\nChatbot: Goodbye! Take care.")
