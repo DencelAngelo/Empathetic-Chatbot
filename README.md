@@ -14,5 +14,5 @@ Rule-Based NLP: Lightweight, interpretable, and transparent emotion detection
 
 **Installation**  
 1. Install source code from GitHub Repository
-2. Install dependencies: ### pip install requests
+2. Install dependencies: pip install requests
 3. Run: python empathetic_chatbot.py
